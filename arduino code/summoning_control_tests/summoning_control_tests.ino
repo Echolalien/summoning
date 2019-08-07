@@ -18,9 +18,13 @@ const int m2d = 11; //motor driver 2 direction pin
 bool yawStop = false; //is yaw endstop pressed
 int yawKnob = 0; //yaw knob position
 int rollKnob = 0; //roll knob position
+bool yawLeft = 0;
+bool yawRight = 0;
+bool rollLeft = 0;
+bool rollRight = 0;
 bool abrt = 0; //abort, pull enable high on both motors, kill processes
 bool calibrated = 0; //robot is calibrated, ready to use
-
+bool fineMode = 0; //give position or give commands
 
 //articulation positions
 int yawPos = 0; //actual yaw position
@@ -74,25 +78,40 @@ void setup() {
 
 void loop() {
 
+  sensorPull(); //get all sensor data and dump into variables
+  functionCheck(); //check for errors in sensor data, positions, get mode
+
+  //check that abort hasn't been activated
   if(abrt == 0){
+    //check if calibration is needed
+    if(calibrated==1){
 
-    //endstop tests
-    yawStop =! digitalRead(ySt);
+      //check yaw axis yknow, exists
+      if(yawMax > 0){
+        
+        //core runtime code
+        if(fineMode == 0){
+          goToPos(); //move to knob positions
+        }
 
-    if(calibrated==0){
-      calibrate();
-    }
-    else{
-      if(yawMax == 0){
+        else{
+          manualDrive(); //drive based on button presses
+        }
+        
+      }
+      else{
+
         abrt = 1;
         Serial.println("Yaw axis not available, aborting all processes");
       }
-      else{
-        //core runtime code
-      }
+    }
+    else{
+      calibrate();
     }
     
   }
+
+  //abort procedure: disengage motors, error light on
   else{
     digitalWrite(killSwitch, HIGH);
     digitalWrite(13, HIGH);
@@ -135,4 +154,50 @@ void calibrate() {
     Serial.println();
     Serial.println("Calibration complete!");
   }
+}
+
+void sensorPull(){
+  //takes all sensor data and dumps into variables
+  
+  yawStop =! digitalRead(ySt);
+  yawLeft =! digitalRead(yL);
+  yawRight =! digitalRead(yR);
+  rollLeft =! digitalRead(rL);
+  rollRight =! digitalRead(rR);
+  yawKnob = analogRead(yK);
+  rollKnob = analogRead(rK);
+}
+
+void functionCheck(){
+  //tests that sensors and positional data match up
+
+  if(yawStop == true && yawMax != yawPos){
+    //hit yawStop unexpectedly!
+
+    //current yaw position is new maximum
+    yawMax = yawPos;
+  }
+
+  if(yawStop == false && yawMax == yawPos){
+    //reached max yaw without hitting endStop
+
+    //reset and uncalibrate eventually, abort while no reset functionality
+    abrt=1;
+  }
+
+  //dictate control mode based on whether knobs are at 0
+  if(rollKnob == 0 && yawKnob == 0){
+    fineMode = 0;
+  }
+  else{
+    fineMode = 1;
+  }
+}
+
+void goToPos(){
+  
+}
+
+void manualDrive(){
+  
 }
