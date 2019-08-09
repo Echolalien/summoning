@@ -23,6 +23,7 @@ bool yawRight = 0;
 bool rollLeft = 0;
 bool rollRight = 0;
 bool abrt = 0; //abort, pull enable high on both motors, kill processes
+int calibrationStage = 0; //if calibration needs several steps, increment this counter
 bool calibrated = 0; //robot is calibrated, ready to use
 bool yawMode = 0; //yawing or (2ndary) rolling? can't do both at 1ce
 int yawSpeed = 2000;
@@ -31,12 +32,12 @@ int yawSpeed = 2000;
 int yawPos = 0; //actual yaw position
 int yawDeg = 0; //yaw position in angles
 int rollPos = 0; //actual roll position
-int yawTarget = 0;
+int yawTarget = 1;
 
 //calibration variables
 int yawMax = 0;
 int rollMax = 0;
-int calibIncr = 10000;
+int calibIncr = 3500;
 int calibTarget = 0; //point to move to
 
 //define motor drivers, dir and step
@@ -93,8 +94,9 @@ void loop() {
 
         //core runtime code
         functionCheck(); //check for errors in sensor data, positions, get mode
+        printOut();
         goToPos(); //move to knob positions
-       
+        Serial.println();
       }
       else {
 
@@ -105,7 +107,6 @@ void loop() {
     else {
       calibrate();
     }
-    Serial.println();
   }
 
   //abort procedure: disengage motors, error light on, 5 sec pause to read console
@@ -119,28 +120,59 @@ void loop() {
 
 void calibrate() {
 
-  //yaw calibrates by moving to endstop
-  if (yawStop != 1) {
-    Serial.print("\t Calibrating yaw...");
-    Serial.print("\t Yawing to endstop");
-    if (motor1.distanceToGo() == 0 && motor2.distanceToGo() == 0) {
-      calibTarget += calibIncr;
-      motor1.moveTo(calibTarget);
-      motor2.moveTo(calibTarget);
+  //STAGE 0 yaw calibrates by moving to endstop, releasing it then saving the max position
+  if(calibrationStage == 0){
+
+    //moves to endstop
+    if (yawTarget != 0) {
+      if(yawStop != 1){
+        if (motor1.distanceToGo() == 0 && motor2.distanceToGo() == 0) {
+          yawTarget += calibIncr;
+          motor1.moveTo(yawTarget);
+          motor2.moveTo(yawTarget);
+          Serial.print("\t Calibrating yaw...");
+          Serial.println("\t Yawing to endstop");
+        }
+        yawPos = yawTarget - motor2.distanceToGo();
+        motor1.run();
+        motor2.run();
+      }
+      
+      //endstop reached, retreat from endstop
+      else{
+        Serial.print("Endstop reached at ");
+        Serial.print(yawPos);
+        Serial.println(", retreating from endstop...");
+        yawTarget = 0;
+        motor1.setCurrentPosition(yawPos);
+        motor2.setCurrentPosition(yawPos);
+        motor1.moveTo(yawTarget);
+        motor2.moveTo(yawTarget);
+      }
     }
-    yawPos = calibTarget - motor2.distanceToGo();
-    motor1.run();
-    motor2.run();
+
+    //retreating
+    else if(yawTarget != yawPos){
+      if(yawMax == 0 && yawStop != 1){
+          yawMax = yawPos;
+          Serial.print("Endstop released at ");
+          Serial.print(yawMax);
+          Serial.println(", setting maximum yaw.");
+          Serial.println("Returning to home");
+      }
+      yawPos = yawTarget - motor2.distanceToGo();
+      motor1.run();
+      motor2.run();
+    }
+    else{
+      calibrationStage++;
+      Serial.println("Arrived at home, yaw axis calibrated successfully!");
+    }
   }
+    
   else {
     //calibration complete
     calibrated = 1;
-    Serial.println();
-    Serial.print("Yaw calibrated!");
-    yawMax = yawPos;
-    Serial.print("\t Yaw steps: ");
-    Serial.print(yawMax);
-    Serial.println();
     Serial.println("Calibration complete! Operational in 5");
     delay(5000);
   }
@@ -173,20 +205,13 @@ void printOut() {
 void functionCheck() {
   //tests that sensors and positional data match up
 
-    if(yawStop == true && yawMax != yawPos+(motor1.distanceToGo()+motor2.distanceToGo())/2){
+    if(yawStop == true){
       Serial.print("Hit yawStop unexpectedly! Clipping yaw range to ");
-      Serial.print(yawPos);
+      Serial.print(yawPos-10);
       Serial.print(" and restarting in 5");
       //current yaw position is new maximum
-      yawMax = yawPos;
+      yawMax = yawPos-10;
       delay(5000);
-    }
-  
-    if(yawStop == false && yawMax == yawPos && calibrated == 1){
-      Serial.println("Reached max yaw without hitting endStop, recalibrating...");
-  
-      //reset and uncalibrate eventually, abort while no reset functionality
-      abrt=1;
     }
 
   //dictate control mode based on whether knobs are at 0
@@ -216,7 +241,7 @@ void goToPos() {
   else if (yawKnob != yawPos) {
     Serial.print("\t Yawing to ");
     Serial.print(yawKnob);
-    int yawDist = yawKnob-yawPos;
+    //int yawDist = yawKnob-yawPos;
     motor1.moveTo(yawKnob);
     motor2.moveTo(yawKnob);
     motor1.setSpeed(yawSpeed);
