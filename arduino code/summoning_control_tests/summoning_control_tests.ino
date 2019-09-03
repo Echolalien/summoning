@@ -14,18 +14,16 @@ const int m2d = 11; //motor driver 2 direction pin
 const int m3s = 8; //motor driver 3 step pin
 const int m3d = 7; // motor driver 3 direction pin
 
-//manual control pins i'm not using in this version i really hope don't fuck anything up
-const int rL = 2; //roll anticlockwise/left pin
-const int rR = 3; //roll clockwise/right pin
-const int yL = 5; //yaw left pin
-const int yR = 6; //yaw right pin
-
 //states
 bool yawStop = false; //is yaw endstop pressed
 bool tipStop = false; //is the face vertical
 bool drumStop = false; //is the drum upright
+int drumGate = 500; //set threshold for opto trigger ADC
+int opto = 0; //variable for opto trigger ADC
 int yawKnob = 0; //yaw knob position
 int rollKnob = 0; //roll knob position
+int tipKnob = 0; //converted roll knob position
+int drumKnob = 0; //converted roll knob position
 bool yawLeft = 0;
 bool yawRight = 0;
 bool rollLeft = 0;
@@ -42,8 +40,10 @@ int drumSpeed = 2000;
 //articulation positions
 int yawPos = 0; //actual yaw position
 int yawDeg = 0; //yaw position in angles
-int tipPos = 0; //actual roll position
+int tipPos = 0; //actual tip position
+int tipDeg = 0; //tip position in angles
 int drumPos = 0; //actual drum position
+int drumDeg = 0; //drum position in angles
 int yawTarget = 1;
 int tipTarget = 1;
 int drumTarget = 1;
@@ -375,15 +375,24 @@ void calibrate() {
 void sensorPull() {
   //takes all sensor data and dumps into variables, prints to serial
 
+  //ADC for opto sensor
+  opto = analogRead(dSt);
+  if(opto>drumGate){
+    drumStop = 1;
+  }
+  else{
+    drumStop = 0;
+  }
+  
   yawStop = ! digitalRead(ySt);
   tipStop = ! digitalRead(tSt);
-  yawLeft = ! digitalRead(yL);
-  yawRight = ! digitalRead(yR);
-  rollLeft = ! digitalRead(rL);
-  rollRight = ! digitalRead(rR);
   yawKnob = map(analogRead(yK), 0, 1023, 0, yawMax);
-  rollKnob = map(analogRead(rK), 0, 1023, 0, 360);
+  rollKnob = analogRead(rK);
+  tipKnob = map(rollKnob, 0, 1023, 0, tipMax);
+  drumKnob = map(rollKnob, 0, 1023, 0, drumMax);
   yawDeg = map(yawPos, 0, yawMax, 0, 180);
+  tipDeg = map(tipPos, 0, tipMax, 0, 360);
+  drumDeg = map(drumPos, 0, drumMax, 0, 360);
 }
 
 void printOut() {
@@ -395,6 +404,10 @@ void printOut() {
   Serial.print(rollKnob);
   Serial.print("\t Yaw position: ");
   Serial.print(yawDeg);
+  Serial.print("\t Tip position: ");
+  Serial.print(tipDeg);
+  Serial.print("\t Drum position: ");
+  Serial.print(drumDeg);
 }
 
 void functionCheck() {
@@ -430,15 +443,20 @@ void goToPos() {
     motor1.setPinsInverted(true, false, false);
   }
   else if (rollKnob != tipPos) {
-    Serial.print("\t Rolling to ");
-    Serial.print(rollKnob);
-    motor1.moveTo(0-rollKnob);
-    motor2.moveTo(rollKnob);
+    Serial.print("\t Rolling tip to ");
+    Serial.print(tipKnob);
+    Serial.print(" and drum to ");
+    Serial.print(drumKnob);
+    motor1.moveTo(0-tipKnob);
+    motor2.moveTo(tipKnob);
+    motor3.moveTo(drumKnob);
     motor1.setSpeed(tipSpeed);
     motor2.setSpeed(tipSpeed);
+    motor3.setSpeed(drumSpeed);
     motor1.runSpeedToPosition();
     motor2.runSpeedToPosition();
-    Serial.print("\t Distance remaining: ");
+    motor3.runSpeedToPosition();
+    Serial.print(".\t Distance remaining: ");
     Serial.print(motor2.distanceToGo());
     tipPos = rollKnob - motor2.distanceToGo();
   }
