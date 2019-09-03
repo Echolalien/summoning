@@ -4,11 +4,13 @@
 const int rL = 2; //roll anticlockwise/left pin
 const int rR = 3; //roll clockwise/right pin
 const int ySt = 4; //endstop pin for yaw
+const int tSt = 3; //endstop for tip roll
 const int yL = 5; //yaw left pin
 const int yR = 6; //yaw right pin
 const int killSwitch = 8; //shared enable pins for motors
-const int yK = A0; //yaw position knob pin
-const int rK = A1; //roll position knob pin
+const int rS1 = A0; //endstop pin for roll 1
+const int yK = A1; //yaw position knob pin
+const int rK = A2; //roll position knob pin
 const int m1s = 10; //motor driver 1 step pin
 const int m1d = 9; //motor driver 1 direction pin
 const int m2s = 12; //motor driver 2 step pin
@@ -16,6 +18,7 @@ const int m2d = 11; //motor driver 2 direction pin
 
 //states
 bool yawStop = false; //is yaw endstop pressed
+bool tipStop = false; //is the face vertical
 int yawKnob = 0; //yaw knob position
 int rollKnob = 0; //roll knob position
 bool yawLeft = 0;
@@ -25,20 +28,24 @@ bool rollRight = 0;
 bool abrt = 0; //abort, pull enable high on both motors, kill processes
 int calibrationStage = 0; //if calibration needs several steps, increment this counter
 bool calibrated = 0; //robot is calibrated, ready to use
-bool yawMode = 0; //yawing or (2ndary) rolling? can't do both at 1ce
+bool yawOn = 0; //yawing or (2ndary) rolling? can't do both at 1ce
+bool rollOn = 0; //as above, set roll position to motors
 int yawSpeed = 2000;
+int rollSpeed = 2000;
 
 //articulation positions
 int yawPos = 0; //actual yaw position
 int yawDeg = 0; //yaw position in angles
 int rollPos = 0; //actual roll position
 int yawTarget = 1;
+int rollTarget = 1;
 
 //calibration variables
 int yawMax = 0;
 int rollMax = 0;
 int calibIncr = 3500;
 int calibTarget = 0; //point to move to
+bool rollHomed = 0; //has roll been homed yet?
 
 //define motor drivers, dir and step
 AccelStepper motor1(AccelStepper::DRIVER, m1d, m1s);
@@ -167,9 +174,102 @@ void calibrate() {
     else{
       calibrationStage++;
       Serial.println("Arrived at home, yaw axis calibrated successfully!");
+      motor1.setCurrentPosition(0);
+      motor2.setCurrentPosition(0);
     }
   }
-    
+
+  //STAGE 1 tip rolls until it tilts the series switches, marking its home point
+  else if(calibrationStage == 1){
+
+    //moves to endstop
+      if(tipStop != 1){
+        if (motor1.distanceToGo() == 0 && motor2.distanceToGo() == 0) {
+          rollTarget -= calibIncr;
+          motor1.moveTo(0-rollTarget);
+          motor2.moveTo(rollTarget);
+          Serial.print("\t Preparing to calibrate tip roll...");
+          Serial.print("\t Rolling to find home for ");
+          Serial.println(calibIncr);
+        }
+        motor1.run();
+        motor2.run();
+      }
+      
+      //endstop reached, set this as 0 and we can now actually calibrate endstop
+      else{
+        Serial.println("Endstop reached, setting this as home");
+        calibrationStage++;
+        rollPos = 0;
+        motor1.setCurrentPosition(0);
+        motor2.setCurrentPosition(0);
+      }
+    }
+
+    //retreating
+    else if (calibrationStage == 2){
+
+      //if it hasn't yet retreated off the stop
+      if(rollHomed == 0){
+      
+        //if the endstop is on
+        if(tipStop == 1){
+          //move opposite direction to endstop until it releases
+          if(motor1.distanceToGo() == 0 && motor2.distanceToGo() == 0){
+            Serial.print("Retreating from endstop for ");
+            Serial.print(calibIncr);
+            rollTarget += calibIncr;
+            motor1.moveTo(0-rollTarget);
+            motor2.moveTo(rollTarget);
+          }
+          motor1.run();
+          motor2.run();
+          rollPos = rollTarget - motor2.distanceToGo();
+        }
+
+        //when it releases
+        else{
+          rollHomed = 1;
+          Serial.println("Endstop released");
+        }
+      }
+
+      //once it's retreated from endstop
+      else{
+
+        //if it hasn't reached endstop at other end
+        if(tipStop =! 1){
+          
+          //move opposite direction to endstop
+          if(motor1.distanceToGo() == 0 && motor2.distanceToGo() == 0){
+            Serial.print("Retreating from endstop for ");
+            Serial.print(calibIncr);
+            rollTarget += calibIncr;
+            motor1.moveTo(0-rollTarget);
+            motor2.moveTo(rollTarget);
+          }
+          motor1.run();
+          motor2.run();
+          rollPos = rollTarget - motor2.distanceToGo();
+        }
+
+        //when it hits endstop at other end
+        else{
+          rollPos = rollTarget - motor2.distanceToGo();
+          rollMax = rollTarget;
+          Serial.print("Hit endstop at ");
+          Serial.print(rollPos);
+          Serial.println(", setting this as maxiumum roll.");
+          Serial.println("Tip roll axis calibrated successfully!");
+          calibrationStage++;
+          motor1.setCurrentPosition(0);
+          motor2.setCurrentPosition(0);
+        }
+      }
+    }
+  
+
+  
   else {
     //calibration complete
     calibrated = 1;
@@ -182,6 +282,7 @@ void sensorPull() {
   //takes all sensor data and dumps into variables, prints to serial
 
   yawStop = ! digitalRead(ySt);
+  tipStop = ! digitalRead(tSt);
   yawLeft = ! digitalRead(yL);
   yawRight = ! digitalRead(yR);
   rollLeft = ! digitalRead(rL);
@@ -208,7 +309,7 @@ void functionCheck() {
     if(yawStop == true){
       Serial.print("Hit yawStop unexpectedly! Clipping yaw range to ");
       Serial.print(yawPos-10);
-      Serial.print(" and restarting in 5");
+      Serial.println(" and restarting in 5");
       //current yaw position is new maximum
       yawMax = yawPos-10;
       delay(5000);
@@ -227,16 +328,32 @@ void goToPos() {
   //move to position of knobs
 
   //check if need roll
-  if (rollKnob != rollPos) {
+  if(rollOn == 0){
     //roll
     motor1.setCurrentPosition(rollPos);
     motor2.setCurrentPosition(rollPos);
+    rollOn = 1;
+    motor1.setPinsInverted(true, false, false);
+  }
+  else if (rollKnob != rollPos) {
+    Serial.print("\t Rolling to ");
+    Serial.print(rollKnob);
+    motor1.moveTo(0-rollKnob);
+    motor2.moveTo(rollKnob);
+    motor1.setSpeed(rollSpeed);
+    motor2.setSpeed(rollSpeed);
+    motor1.runSpeedToPosition();
+    motor2.runSpeedToPosition();
+    Serial.print("\t Distance remaining: ");
+    Serial.print(motor2.distanceToGo());
+    rollPos = rollKnob - motor2.distanceToGo();
   }
   //check if need yaw
-  else if(yawMode == 0){
+  else if(yawOn == 0){
     motor1.setCurrentPosition(yawPos);
     motor2.setCurrentPosition(yawPos);
-    yawMode = 1;
+    yawOn = 1;
+    motor1.setPinsInverted(false, false, false);
   }
   else if (yawKnob != yawPos) {
     Serial.print("\t Yawing to ");
@@ -250,6 +367,10 @@ void goToPos() {
     motor2.runSpeedToPosition();
     Serial.print("\t Distance remaining: ");
     Serial.print(motor2.distanceToGo());
-    yawPos = yawKnob - motor2.distanceToGo();
+  }
+  else{
+    Serial.print("In position");
+    rollOn = 0;
+    yawOn = 0;
   }
 }
