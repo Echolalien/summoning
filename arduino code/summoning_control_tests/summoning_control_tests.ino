@@ -1,24 +1,26 @@
 #include <AccelStepper.h>
 
 //pin declaration
-const int ySt = 4; //endstop pin for yaw
-const int tSt = 3; //endstop for tip roll
-const int dSt = A3; //endstop pin for drum roll
-const int killSwitch = 8; //shared enable pins for motors
+const int ySt = 46; //endstop pin for yaw
+const int tSt = 45; //endstop for tip roll
+const int dSt = A2; //endstop pin for drum roll
+const int killSwitch1 = 30; //enable pins for motors
+const int killSwitch2 = 31;
+const int killSwitch3 = 32;
 const int yK = A1; //yaw position knob pin
-const int rK = A2; //roll position knob pin
-const int m1s = 10; //motor driver 1 step pin
-const int m1d = 9; //motor driver 1 direction pin
-const int m2s = 12; //motor driver 2 step pin
-const int m2d = 11; //motor driver 2 direction pin
-const int m3s = 8; //motor driver 3 step pin
-const int m3d = 7; // motor driver 3 direction pin
+const int rK = A0; //roll position knob pin
+const int m1s = 21; //motor driver 1 step pin (yaw left)
+const int m1d = 22; //motor driver 1 direction pin
+const int m2s = 23; //motor driver 2 step pin (yaw right)
+const int m2d = 24; //motor driver 2 direction pin
+const int m3s = 25; //motor driver 3 step pin (drum)
+const int m3d = 26; //motor driver 3 direction pin
 
 //states
 bool yawStop = false; //is yaw endstop pressed
 bool tipStop = false; //is the face vertical
 bool drumStop = false; //is the drum upright
-int drumGate = 500; //set threshold for opto trigger ADC
+int drumGate = 15; //set threshold for opto trigger ADC
 int opto = 0; //variable for opto trigger ADC
 int yawKnob = 0; //yaw knob position
 int rollKnob = 0; //roll knob position
@@ -65,10 +67,11 @@ AccelStepper motor3(AccelStepper::DRIVER, m3d, m3s);
 void setup() {
 
   //pin modes, pull up increment control pins
-  for (int i = 2; i < 7; i++) {
-    pinMode(i, INPUT_PULLUP);
-  }
-  pinMode(killSwitch, OUTPUT);
+  pinMode(ySt, INPUT_PULLUP);
+  pinMode(tSt, INPUT_PULLUP);
+  pinMode(killSwitch1, OUTPUT);
+  pinMode(killSwitch2, OUTPUT);  
+  pinMode(killSwitch3, OUTPUT);
 
   Serial.begin(9600);
   while (!Serial);
@@ -84,7 +87,9 @@ void setup() {
   motor3.setAcceleration(1000);
 
   //release motors, check you're not already at the yaw endstop, if so, abort
-  digitalWrite(killSwitch, HIGH);
+    digitalWrite(killSwitch1, HIGH);
+    digitalWrite(killSwitch2, HIGH);  
+    digitalWrite(killSwitch3, HIGH);
   Serial.println("Checking yaw");
   yawStop = ! digitalRead(ySt);
   if (yawStop == HIGH) {
@@ -95,7 +100,9 @@ void setup() {
     Serial.println("Yaw is go");
     Serial.println("Startup complete, Summoning online, engaging motors in 5");
     delay(5000);
-    digitalWrite(killSwitch, LOW);
+      digitalWrite(killSwitch1, LOW);
+    digitalWrite(killSwitch2, LOW);  
+    digitalWrite(killSwitch3, LOW);
   }
 }
 
@@ -132,7 +139,9 @@ void loop() {
 
   //abort procedure: disengage motors, error light on, 5 sec pause to read console
   else {
-    digitalWrite(killSwitch, HIGH);
+    digitalWrite(killSwitch1, HIGH);
+    digitalWrite(killSwitch2, HIGH);  
+    digitalWrite(killSwitch3, HIGH);
     digitalWrite(13, HIGH);
     Serial.println("Summoning offline");
     delay(5000);
@@ -202,8 +211,8 @@ void calibrate() {
           tipTarget -= calibIncr;
           motor1.moveTo(0-tipTarget);
           motor2.moveTo(tipTarget);
-          Serial.print("\t Preparing to calibrate tip roll...");
-          Serial.print("\t Rolling to find home for ");
+          Serial.println("Preparing to calibrate tip roll...");
+          Serial.println("Rolling to find home for ");
           Serial.println(calibIncr);
         }
         motor1.run();
@@ -341,7 +350,7 @@ void calibrate() {
           
           //move opposite direction to endstop
           if(motor3.distanceToGo() == 0){
-            Serial.print("Retreating from endstop for ");
+            Serial.println("Retreating from endstop for ");
             Serial.print(calibIncr);
             drumTarget += calibIncr;
             motor3.moveTo(drumTarget);
@@ -377,7 +386,7 @@ void sensorPull() {
 
   //ADC for opto sensor
   opto = analogRead(dSt);
-  if(opto>drumGate){
+  if(opto<drumGate){
     drumStop = 1;
   }
   else{
